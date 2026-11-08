@@ -1589,6 +1589,109 @@ static void meshletsSpatialDeep()
 	assert(result == N);
 }
 
+static void meshletsLocal()
+{
+	const float vbd[4 * 3] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+	const unsigned int ibd[6] = {0, 2, 1, 1, 2, 3};
+
+	meshopt_Meshlet ml[1];
+	unsigned int mv[6];
+	unsigned char mt[8];
+
+	size_t mc = meshopt_buildMeshlets(ml, mv, mt, ibd, 6, vbd, 4, sizeof(float) * 3, 64, 64, 0.f);
+	assert(mc == 1);
+
+	meshopt_Meshlet mll[1];
+	unsigned char mvl[6 * sizeof(float) * 3];
+	unsigned char mtl[8];
+
+	size_t vl = meshopt_localizeMeshlets(mll, mvl, sizeof(float) * 3, mtl, ml, mc, mv, mt, vbd, 4, sizeof(float) * 3);
+	assert(vl == ml[0].vertex_count);
+	assert(mll[0].vertex_offset == 0 && mll[0].vertex_count == ml[0].vertex_count);
+	assert(mll[0].triangle_offset == 0 && mll[0].triangle_count == ml[0].triangle_count);
+
+	// localized vertices preserve the source meshlet vertex order and are tightly packed
+	const float* local = reinterpret_cast<const float*>(mvl);
+	for (size_t i = 0; i < mll[0].vertex_count; ++i)
+		assert(memcmp(local + i * 3, vbd + mv[ml[0].vertex_offset + i] * 3, sizeof(float) * 3) == 0);
+
+	// triangles are copied unchanged; they already use meshlet-local 8-bit indices
+	assert(memcmp(mtl, mt + ml[0].triangle_offset, mll[0].triangle_count * 3) == 0);
+
+	meshopt_Bounds boundsl = meshopt_computeLocalMeshletBounds(mtl, mll[0].triangle_count, local, mll[0].vertex_count, sizeof(float) * 3);
+	meshopt_Bounds boundsg = meshopt_computeMeshletBounds(mv + ml[0].vertex_offset, mt + ml[0].triangle_offset, ml[0].triangle_count, vbd, 4, sizeof(float) * 3);
+
+	assert(fabsf(boundsl.center[0] - boundsg.center[0]) < 1e-5f);
+	assert(fabsf(boundsl.center[1] - boundsg.center[1]) < 1e-5f);
+	assert(fabsf(boundsl.center[2] - boundsg.center[2]) < 1e-5f);
+	assert(fabsf(boundsl.radius - boundsg.radius) < 1e-5f);
+
+	// two tetrahedrons far apart must produce two self-contained vertex buffers with duplicated vertices
+	float vb[2 * 4 * 3] = {
+	    0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1,
+	    10, 0, 0, 11, 0, 0, 10, 1, 0, 10, 0, 1 //
+	};
+
+	unsigned int ib[2 * 4 * 3] = {
+	    0, 1, 2, 0, 2, 3, 0, 3, 1, 1, 3, 2,
+	    4, 5, 6, 4, 6, 7, 4, 7, 5, 5, 7, 6 //
+	};
+
+	meshopt_Meshlet ml2[2];
+	unsigned int mv2[2 * 16];
+	unsigned char mt2[2 * 8 * 3];
+
+	assert(meshopt_buildMeshlets(ml2, mv2, mt2, ib, sizeof(ib) / sizeof(ib[0]), vb, 8, sizeof(float) * 3, 16, 4, 0.f) == 2);
+
+	meshopt_Meshlet mll2[2];
+	unsigned char mvl2[2 * 16 * sizeof(float) * 3];
+	unsigned char mtl2[2 * 8 * 3];
+
+	vl = meshopt_localizeMeshlets(mll2, mvl2, sizeof(float) * 3, mtl2, ml2, 2, mv2, mt2, vb, 8, sizeof(float) * 3);
+	assert(vl == 8);
+	assert(mll2[0].vertex_count == 4 && mll2[1].vertex_count == 4);
+	assert(mll2[0].vertex_offset == 0 && mll2[1].vertex_offset == 4);
+
+	const float* local2 = reinterpret_cast<const float*>(mvl2);
+	for (size_t i = 0; i < mll2[0].vertex_count; ++i)
+		assert(memcmp(local2 + i * 3, vb + mv2[ml2[0].vertex_offset + i] * 3, sizeof(float) * 3) == 0);
+	for (size_t i = 0; i < mll2[1].vertex_count; ++i)
+		assert(memcmp(local2 + (mll2[1].vertex_offset + i) * 3, vb + mv2[ml2[1].vertex_offset + i] * 3, sizeof(float) * 3) == 0);
+
+	// many small meshlets: source vertex offsets can exceed the global vertex count,
+	// so localization must not mistake them for references into the source vertex array
+	const int N = 64;
+	std::vector<float> vbl((N + 1) * 3, 0.f);
+	std::vector<unsigned int> ibl(N * 3);
+
+	for (int i = 0; i < N; ++i)
+	{
+		vbl[(i + 1) * 3 + 0] = float(i);
+		vbl[(i + 1) * 3 + 1] = float(i);
+		vbl[(i + 1) * 3 + 2] = float(i);
+
+		ibl[i * 3 + 0] = 0;
+		ibl[i * 3 + 1] = ibl[i * 3 + 2] = unsigned(i + 1);
+	}
+
+	size_t bound = meshopt_buildMeshletsBound(N * 3, 4, 4);
+	std::vector<meshopt_Meshlet> ml3(bound);
+	std::vector<unsigned int> mv3(N * 3);
+	std::vector<unsigned char> mt3(N * 3);
+
+	mc = meshopt_buildMeshlets(&ml3[0], &mv3[0], &mt3[0], &ibl[0], N * 3, &vbl[0], N + 1, sizeof(float) * 3, 4, 4, 0.f);
+	assert(mc > 0 && mc < size_t(N));
+
+	std::vector<meshopt_Meshlet> mll3(bound);
+	std::vector<unsigned char> mvl3(N * 3 * sizeof(float) * 3);
+	std::vector<unsigned char> mtl3(N * 3);
+
+	vl = meshopt_localizeMeshlets(&mll3[0], &mvl3[0], sizeof(float) * 3, &mtl3[0], &ml3[0], mc, &mv3[0], &mt3[0], &vbl[0], N + 1, sizeof(float) * 3);
+	assert(vl == mll3[mc - 1].vertex_offset + mll3[mc - 1].vertex_count);
+	assert(mll3[mc - 1].vertex_offset + mll3[mc - 1].vertex_count <= N * 3);
+	assert(mll3[mc - 1].vertex_offset > size_t(N + 1));
+}
+
 static void partitionBasic()
 {
 	// 0   1   2
@@ -3666,6 +3769,7 @@ void runTests()
 	meshletsMax();
 	meshletsSpatial();
 	meshletsSpatialDeep();
+	meshletsLocal();
 
 	partitionBasic();
 	partitionSpatial();
