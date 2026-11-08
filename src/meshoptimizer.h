@@ -761,6 +761,24 @@ MESHOPTIMIZER_API size_t meshopt_buildMeshletsFlex(struct meshopt_Meshlet* meshl
 MESHOPTIMIZER_API size_t meshopt_buildMeshletsSpatial(struct meshopt_Meshlet* meshlets, unsigned int* meshlet_vertices, unsigned char* meshlet_triangles, const unsigned int* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, size_t max_vertices, size_t min_triangles, size_t max_triangles, float fill_weight);
 
 /**
+ * Localize meshlets
+ * Converts meshlets that use a global 32-bit vertex indirection buffer into self-contained meshlets.
+ *
+ * This function is a post-process for meshlets produced by any of the meshopt_buildMeshlets* functions.
+ * source_vertices contains 32-bit indices into vertices; the destination receives compacted, concatenated
+ * localized vertex data with shared boundary vertices duplicated between meshlets. Each destination meshlet's
+ * vertex_offset is the base of its vertex data in destination_vertices, and its 8-bit triangles are relative to
+ * that base. Only the first vertex_size bytes of each source vertex are copied, so vertex_size can be smaller
+ * than vertex_stride to pack a subset of vertex attributes; the localized data uses vertex_size as its stride.
+ *
+ * destination_vertices must contain enough space for index_count * vertex_size bytes in the worst case.
+ * destination_triangles must contain enough space for index_count bytes.
+ * destination may alias source_meshlets only if no meshlet is moved to a lower offset; use separate buffers otherwise.
+ * Returns the number of localized vertices written.
+ */
+MESHOPTIMIZER_API size_t meshopt_localizeMeshlets(struct meshopt_Meshlet* destination, void* destination_vertices, size_t vertex_size, unsigned char* destination_triangles, const struct meshopt_Meshlet* source_meshlets, size_t meshlet_count, const unsigned int* source_vertices, const unsigned char* source_triangles, const void* vertices, size_t vertex_count, size_t vertex_stride);
+
+/**
  * Meshlet optimizer
  * Reorders meshlet vertices and triangles to maximize locality which can improve rasterizer throughput or ray tracing performance when using fast-build modes.
  *
@@ -820,6 +838,15 @@ struct meshopt_Bounds
  */
 MESHOPTIMIZER_API struct meshopt_Bounds meshopt_computeClusterBounds(const unsigned int* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride);
 MESHOPTIMIZER_API struct meshopt_Bounds meshopt_computeMeshletBounds(const unsigned int* meshlet_vertices, const unsigned char* meshlet_triangles, size_t triangle_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride);
+
+/**
+ * Localized meshlet bounds generator
+ * Computes bounding volumes for a self-contained meshlet whose 8-bit triangles index directly into a localized
+ * vertex buffer. vertex_positions should point at the first localized vertex, with vertex_positions_stride matching
+ * the localized vertex stride (vertex_size used during construction). The result is compatible with all culling
+ * formulas documented for meshopt_computeMeshletBounds.
+ */
+MESHOPTIMIZER_API struct meshopt_Bounds meshopt_computeLocalMeshletBounds(const unsigned char* meshlet_triangles, size_t triangle_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride);
 
 /**
  * Sphere bounds generator

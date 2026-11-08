@@ -1376,5 +1376,46 @@ size_t meshopt_buildMeshletsSpatial(struct meshopt_Meshlet* meshlets, unsigned i
 	return meshlet_offset;
 }
 
+size_t meshopt_localizeMeshlets(meshopt_Meshlet* destination, void* destination_vertices, size_t vertex_size, unsigned char* destination_triangles, const meshopt_Meshlet* source_meshlets, size_t meshlet_count, const unsigned int* source_vertices, const unsigned char* source_triangles, const void* vertices, size_t vertex_count, size_t vertex_stride)
+{
+	using namespace meshopt;
+
+	assert(vertex_size > 0 && vertex_size <= vertex_stride);
+	assert(vertex_stride >= 12);
+
+	// tightly pack localized vertices while preserving the meshlet vertex/triangle order
+	unsigned char* vertex_data = static_cast<unsigned char*>(destination_vertices);
+	size_t vertex_offset = 0;
+	size_t triangle_offset = 0;
+
+	for (size_t i = 0; i < meshlet_count; ++i)
+	{
+		const meshopt_Meshlet& source = source_meshlets[i];
+		meshopt_Meshlet& target = destination[i];
+
+		target.vertex_offset = unsigned(vertex_offset);
+		target.vertex_count = source.vertex_count;
+		target.triangle_offset = unsigned(triangle_offset);
+		target.triangle_count = source.triangle_count;
+
+		assert(source.vertex_count <= 256);
+		assert(source.triangle_count <= 512);
+
+		for (size_t j = 0; j < source.vertex_count; ++j)
+		{
+			unsigned int index = source_vertices[source.vertex_offset + j];
+			assert(index < vertex_count);
+
+			memcpy(vertex_data + vertex_offset * vertex_size, static_cast<const unsigned char*>(vertices) + size_t(index) * vertex_stride, vertex_size);
+			vertex_offset++;
+		}
+
+		memcpy(destination_triangles + triangle_offset, source_triangles + source.triangle_offset, source.triangle_count * 3);
+		triangle_offset += source.triangle_count * 3;
+	}
+
+	return vertex_offset;
+}
+
 #undef SIMD_SSE
 #undef SIMD_NEON
